@@ -334,16 +334,16 @@ export default class BioBot {
 
     private usersToMsg(users: User[]) {
         return users.map(user =>
-            user.id + "  "
-            + user.alias ? user.alias : user.uri.substring(BioBot.TG_AT_PREFIX.length) + "  "
-                + user.bio)
+            user.id + "  " +
+            (user.alias ? user.alias : user.uri.substring(BioBot.TG_AT_PREFIX.length)) + "  " +
+            user.bio)
             .join('\n')
     }
 
     private userBiosToMsg(userBios: UserBio[]) {
         return userBios.map(bio =>
-            new Date(bio.create_time).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai"}) + "  "
-            + bio.bio)
+            new Date(bio.create_time).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai"}) + "  " +
+            bio.bio)
             .join('\n')
     }
 }
