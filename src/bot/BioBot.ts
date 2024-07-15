@@ -5,7 +5,6 @@ import {session, Telegraf} from "telegraf";
 // import {XMLParser} from "fast-xml-parser";
 import * as cheerio from 'cheerio'
 import DbHeller from "../db/DbHeller";
-import * as fs from "node:fs";
 
 dotenv.config()
 
@@ -49,12 +48,12 @@ export default class BioBot {
         })
 
         const commands = [
-            {command: 'bio', description: '获取用户当前bio，可发送多个，空格分隔'},
-            {command: 'add', description: '添加用户监听，可发送多个，空格分隔(可添加别名:分开)'},
+            {command: 'bio', description: '获取监听用户bio，可发送多个，空格分隔'},
+            {command: 'add', description: '添加用户监听，可发送多个，空格分隔(可添加别名::分开)'},
             {command: 'rm', description: '移除用户监听，可发送多个，空格分隔'},
             {command: 'list', description: '列出当前监听的用户，可发送id，空格分隔'},
             {command: 'history', description: '列出单个用户bio历史记录，发送id'},
-            {command: 'alias', description: '设置用户别名，可发送多个，空格分隔 (id:alias)'},
+            {command: 'alias', description: '设置用户别名，可发送多个，空格分隔 (id::alias)'},
             {command: 'format', description: `用户bio改变后通知格式,可用变量为 \${alias} \${name} \${bio}`},
             {command: 'send', description: '切换是否发送到当前群聊'},
         ]
@@ -63,6 +62,7 @@ export default class BioBot {
         this.actionHandler()
         bot.telegram.setMyCommands(commands)
         bot.launch().then(r => {
+            console.log('bot started')
         })
     }
 
@@ -71,10 +71,13 @@ export default class BioBot {
 
         bot.command('bio', ctx => {
             const args = ctx.args;
-            this.getCurrentBios(this.argsToUsers(args))
-                .then(bios => {
-                    ctx.reply(bios.map(bio => bio.uri.substring(BioBot.TG_AT_PREFIX.length) + "  " + bio.bio).join('\n'))
+            this.dbHeller.getChatFormatByChatId(ctx.chat.id).then(chatFormat => {
+                this.dbHeller.getUserByIds(args.map(arg => parseInt(arg))).then(bios => {
+                    bios.forEach(it => {
+                        ctx.reply(this.formatMsg(chatFormat.format, it))
+                    })
                 })
+            })
         })
 
         bot.command('add', ctx => {
@@ -84,7 +87,10 @@ export default class BioBot {
                 .then(bios => {
                     users.forEach(it => it.bio_get_time = Date.now())
                     this.dbHeller.batchInsertUsers(users);
-                    ctx.reply("添加成功, 当前bio:\n" + bios.map(bio => bio.uri.substring(BioBot.TG_AT_PREFIX.length) + "  " + bio.bio).join('\n'))
+                    let uris = users.map(it => it.uri);
+                    this.dbHeller.getUserByUris(uris).then(insertUsers => {
+                        ctx.reply("添加成功,Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                    })
                 }).catch(err => {
                 console.error('add users error: ', err)
                 ctx.reply('添加失败')
@@ -144,8 +150,16 @@ export default class BioBot {
         })
 
         bot.command('format', ctx => {
-            fs.writeFileSync('storage/format', ctx.message.text);
-            ctx.reply('设置格式成功')
+            try {
+                this.dbHeller.updateChatFormat({
+                    chat_id: ctx.chat.id,
+                    format: ctx.payload
+                })
+                ctx.reply('设置格式成功')
+            } catch (e) {
+                ctx.reply('设置格式失败')
+            }
+
         })
 
         bot.command('send', async ctx => {
@@ -198,15 +212,15 @@ export default class BioBot {
                 });
             }
 
-            ctx.answerCbQuery(); // Close the callback query
+            ctx.answerCbQuery();
         });
     }
 
-    private sendUsersInBatches(userCache: any[], batchSize: number, ctx) {
+    private sendUsersInBatches(userCache: User[], batchSize: number, ctx) {
         return (start = 0) => {
             const batch = userCache.slice(start, start + batchSize);
             if (batch.length > 0) {
-                ctx.reply(batch.map(user => user.id + "  " + user.uri.substring(BioBot.TG_AT_PREFIX.length) + "  " + user.bio).join('\n'), {
+                ctx.reply("Id Name/Alias Bio\n" + this.usersToMsg(batch), {
                     reply_markup: batch.length >= BioBot.BATCH_SIZE ? {
                         inline_keyboard: [
                             [{text: '获取更多', callback_data: `list_more_${start + batchSize}`}]
@@ -219,11 +233,11 @@ export default class BioBot {
         };
     }
 
-    private sendBiosInBatches(bioCache: any[], batchSize: number, ctx) {
+    private sendBiosInBatches(bioCache: UserBio[], batchSize: number, ctx) {
         return (start = 0) => {
             const batch = bioCache.slice(start, start + batchSize);
             if (batch.length > 0) {
-                ctx.reply(batch.map(bio => new Date(bio.create_time).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai"}) + "  " + bio.bio).join('\n'), {
+                ctx.reply("Time Bio\n" + this.userBiosToMsg(batch), {
                     reply_markup: batch.length >= BioBot.BATCH_SIZE ? {
                         inline_keyboard: [
                             [{
@@ -281,7 +295,7 @@ export default class BioBot {
 
     public async getCurrentBios(users: User[]) {
         return Promise.all(users.map(async user => {
-            let res = {uri: user.uri, bio: ''}
+            let res = {uri: user.uri, bio: ''} as User
             try {
                 const response = await fetch(user.uri);
                 const data = await response.text();
@@ -317,5 +331,20 @@ export default class BioBot {
             }
             return user
         })
+    }
+
+    private usersToMsg(users: User[]) {
+        return users.map(user =>
+            user.id + "  "
+            + user.alias ? user.alias : user.uri.substring(BioBot.TG_AT_PREFIX.length) + "  "
+                + user.bio)
+            .join('\n')
+    }
+
+    private userBiosToMsg(userBios: UserBio[]) {
+        return userBios.map(bio =>
+            new Date(bio.create_time).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai"}) + "  "
+            + bio.bio)
+            .join('\n')
     }
 }
