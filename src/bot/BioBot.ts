@@ -2,7 +2,6 @@
 import dotenv from 'dotenv'
 import {User, UserBio} from "../entity/UserBioType";
 import {session, Telegraf} from "telegraf";
-// import {XMLParser} from "fast-xml-parser";
 import * as cheerio from 'cheerio'
 import DbHeller from "../db/DbHeller";
 
