@@ -49,7 +49,7 @@ export default class BioBot {
         const commands = [
             {command: 'bio', description: '获取监听用户bio，可发送多个，空格分隔'},
             {command: 'add', description: '添加用户监听，可发送多个，空格分隔(可添加别名::分开)'},
-            {command: 'rm', description: '移除用户监听，可发送多个，空格分隔'},
+            {command: 'change', description: '改变用户监听状态，可发送多个，空格分隔'},
             {command: 'list', description: '列出当前监听的用户，可发送id，空格分隔'},
             {command: 'history', description: '列出单个用户bio历史记录，发送id'},
             {command: 'alias', description: '设置用户别名，可发送多个，空格分隔 (id::alias)'},
@@ -60,9 +60,7 @@ export default class BioBot {
         this.commandHandler()
         this.actionHandler()
         bot.telegram.setMyCommands(commands)
-        bot.launch().then(r => {
-            console.log('bot started')
-        })
+        bot.launch()
     }
 
     private commandHandler() {
@@ -71,11 +69,15 @@ export default class BioBot {
         bot.command('bio', ctx => {
             const args = ctx.args;
             this.dbHeller.getChatFormatByChatId(ctx.chat.id).then(chatFormat => {
-                this.dbHeller.getUserByIds(args.map(arg => parseInt(arg))).then(bios => {
-                    bios.forEach(it => {
-                        ctx.reply(this.formatMsg(chatFormat.format, it))
+                if (chatFormat) {
+                    this.dbHeller.getUserByIds(args.map(arg => parseInt(arg))).then(bios => {
+                        bios.forEach(it => {
+                            ctx.reply(this.formatMsg(chatFormat.format, it))
+                        })
                     })
-                })
+                } else {
+                    ctx.reply('请先使用/send开启发送到当前群聊功能')
+                }
             })
         })
 
@@ -84,11 +86,26 @@ export default class BioBot {
             const users = this.argsToUsers(args);
             this.getCurrentBios(users)
                 .then(bios => {
-                    users.forEach(it => it.bio_get_time = Date.now())
-                    this.dbHeller.batchInsertUsers(users);
-                    let uris = users.map(it => it.uri);
+                    if (!bios) {
+                        ctx.reply('添加失败')
+                        return
+                    }
+                    bios.forEach(it => it.bio_get_time = Date.now())
+                    this.dbHeller.batchInsertUsers(bios);
+                    let uris = bios.map(it => it.uri);
                     this.dbHeller.getUserByUris(uris).then(insertUsers => {
-                        ctx.reply("添加成功,Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                        if (insertUsers) {
+                            this.dbHeller.batchInsertUserBios(insertUsers.map(user => {
+                                return {
+                                    user_id: user.id,
+                                    bio: user.bio,
+                                    create_time: user.bio_get_time
+                                } as UserBio
+                            }))
+                            ctx.reply("添加成功,Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                        } else {
+                            ctx.reply('添加失败')
+                        }
                     })
                 }).catch(err => {
                 console.error('add users error: ', err)
@@ -112,15 +129,24 @@ export default class BioBot {
             }
         });
 
-        bot.command('rm', ctx => {
+        bot.command('change', ctx => {
             const users = ctx.args.map(arg => {
-                return {id: parseInt(arg), is_deleted: true} as User
+                return {id: parseInt(arg)} as User
             })
             try {
-                this.dbHeller.batchUpdateUsers(users);
-                ctx.reply('删除监听成功')
+                this.dbHeller.getUserByIds(users.map(it => it.id))
+                    .then(getUsers => {
+                        if (getUsers) {
+                            getUsers.forEach(it => it.is_deleted = !it.is_deleted)
+                            this.dbHeller.batchUpdateUsers(getUsers);
+                        } else {
+                            ctx.reply('用户不存在')
+                        }
+                    })
+                ctx.reply('切换监听状态成功')
             } catch (e) {
-                ctx.reply('删除监听失败')
+                console.error('change error: ', e)
+                ctx.reply('切换监听状态失败')
             }
 
         })
@@ -336,7 +362,7 @@ export default class BioBot {
         return users.map(user =>
             user.id + "  " +
             (user.alias ? user.alias : user.uri.substring(BioBot.TG_AT_PREFIX.length)) + "  " +
-            user.bio)
+            user.bio + (user.is_deleted ? "(已删除)" : ""))
             .join('\n')
     }
 
