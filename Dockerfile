@@ -9,4 +9,6 @@ ENV BOT_TOKEN=""
 
 COPY src .
 
+RUN npm i
+
 CMD [ "npm", "start" ]
