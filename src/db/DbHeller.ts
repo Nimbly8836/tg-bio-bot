@@ -14,7 +14,7 @@ export default class DbHeller {
         (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             uid          INTEGER,
-            uri          TEXT NOT NULL UNIQUE,
+            uri          TEXT,
             alias        TEXT,
             is_deleted   BOOLEAN DEFAULT 0,
             bio          TEXT,
@@ -27,7 +27,7 @@ export default class DbHeller {
         CREATE TABLE IF NOT EXISTS user_bio
         (
             user_id     INTEGER NOT NULL,
-            bio         TEXT    NOT NULL,
+            bio         TEXT    NOT NULL CHECK (bio <> ''),
             create_time INTEGER DEFAULT CURRENT_TIMESTAMP
         )
     `;
@@ -141,6 +141,21 @@ export default class DbHeller {
             this._db.all(`SELECT *
                           FROM user
                           WHERE id in (${placeholders})`, ids, (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(row as User[]);
+                }
+            });
+        });
+    }
+
+    public getUserByUids(ids: number[]): Promise<User[]> {
+        return new Promise((resolve, reject) => {
+            const placeholders = ids.map(() => '?').join(',');
+            this._db.all(`SELECT *
+                          FROM user
+                          WHERE uid in (${placeholders})`, ids, (err, row) => {
                 if (err) {
                     reject(err);
                 } else {

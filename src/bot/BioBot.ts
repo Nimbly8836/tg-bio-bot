@@ -22,12 +22,29 @@ export default class BioBot {
     private dbHeller: DbHeller = new DbHeller()
     private tmp_current_bios: UserBio[] = []
 
+    private commands = [
+        {command: 'bio', description: '获取监听用户bio，可发送多个，空格分隔'},
+        {command: 'add', description: '添加用户监听，可发送多个，空格分隔(可添加别名::分开)'},
+        {command: 'change', description: '改变用户监听状态，可发送多个，空格分隔'},
+        {command: 'list', description: '列出当前监听的用户，可发送id，空格分隔'},
+        {command: 'history', description: '列出单个用户bio历史记录，发送id'},
+        {command: 'alias', description: '设置用户别名，可发送多个，空格分隔 (id::alias)'},
+        {
+            command: 'format',
+            description: `用户bio改变后通知格式, 可用变量为 \${alias} \${name} \${bio} \${time}(抓取Asia/Shanghai时间)`
+        },
+        {command: 'send', description: '切换是否发送到当前群聊'},
+        {command: 'adme', description: '私聊机器人添加自己'},
+    ]
+
     public start() {
         this.init();
         const bot = this._bot
         bot.use(session())
 
-        this.monitor()
+        this.monitor().catch(err => {
+            console.error('monitor error: ', err)
+        })
 
         bot.start((ctx) => {
             ctx.reply('这个bot可以监控用户的bio，并发送到指定的频道(使用前请获得别人的同意)。统一格式使用@用户名或者链接')
@@ -46,21 +63,15 @@ export default class BioBot {
 
         })
 
-        const commands = [
-            {command: 'bio', description: '获取监听用户bio，可发送多个，空格分隔'},
-            {command: 'add', description: '添加用户监听，可发送多个，空格分隔(可添加别名::分开)'},
-            {command: 'change', description: '改变用户监听状态，可发送多个，空格分隔'},
-            {command: 'list', description: '列出当前监听的用户，可发送id，空格分隔'},
-            {command: 'history', description: '列出单个用户bio历史记录，发送id'},
-            {command: 'alias', description: '设置用户别名，可发送多个，空格分隔 (id::alias)'},
-            {command: 'format', description: `用户bio改变后通知格式,可用变量为 \${alias} \${name} \${bio}`},
-            {command: 'send', description: '切换是否发送到当前群聊'},
-        ]
-
+        this.userHandler()
         this.commandHandler()
         this.actionHandler()
-        bot.telegram.setMyCommands(commands)
-        bot.launch()
+        bot.telegram.setMyCommands(this.commands).catch(err => {
+            console.error('setMyCommands error: ', err)
+        })
+        bot.launch().catch(err => {
+            console.error('bot launch error: ', err)
+        })
     }
 
     private commandHandler() {
@@ -102,7 +113,7 @@ export default class BioBot {
                                     create_time: user.bio_get_time
                                 } as UserBio
                             }))
-                            ctx.reply("添加成功,Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                            ctx.reply("添加成功, Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
                         } else {
                             ctx.reply('添加失败')
                         }
@@ -111,6 +122,44 @@ export default class BioBot {
                 console.error('add users error: ', err)
                 ctx.reply('添加失败')
             })
+        })
+        bot.command('adme', ctx => {
+            const chatId = ctx.message.from.id;
+            if (chatId) {
+                this.getCurrentUserInfo(chatId).then(user => {
+                    this.dbHeller.getUserByUids([chatId]).then(getUsers => {
+                        if (getUsers.length === 0) {
+                            this.dbHeller.batchInsertUsers([user])
+                            if (user.bio) {
+                                this.dbHeller.getUserByUids([chatId]).then(insertUsers => {
+                                    if (insertUsers) {
+                                        this.dbHeller.batchInsertUserBios(insertUsers.map(user => {
+                                            return {
+                                                user_id: user.id,
+                                                bio: user.bio,
+                                                create_time: user.bio_get_time
+                                            } as UserBio
+                                        }))
+                                        return ctx.reply("添加成功, Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                                    } else {
+                                        return ctx.reply('添加失败')
+                                    }
+                                })
+                            }
+                            return ctx.reply("添加成功")
+                        } else {
+                            let first = getUsers[0];
+                            if (first.uri !== user.uri) {
+                                this.dbHeller.batchUpdateUsers([first])
+                            }
+                            return ctx.reply('已添加')
+                        }
+                    })
+
+                })
+            } else {
+                ctx.reply('添加失败')
+            }
         })
 
         bot.command('list', ctx => {
@@ -133,24 +182,34 @@ export default class BioBot {
             const users = ctx.args.map(arg => {
                 return {id: parseInt(arg)} as User
             })
+            if (users.length === 0) {
+                return ctx.reply('请输入id')
+            }
             try {
                 this.dbHeller.getUserByIds(users.map(it => it.id))
                     .then(getUsers => {
+                        // if (getUsers.length !== users.length) {
+                        //     const notExitIds = users.map(it => {
+                        //         if (!getUsers.map(it => it.id).includes(it.id)) {
+                        //             return it.id
+                        //         }
+                        //     }).join(',')
+                        //     return ctx.reply(`${notExitIds} 用户不存在`)
+                        // }
                         if (getUsers) {
                             getUsers.forEach(it => it.is_deleted = !it.is_deleted)
                             this.dbHeller.batchUpdateUsers(getUsers);
                         } else {
                             ctx.reply('用户不存在')
                         }
+                        ctx.reply('切换监听状态成功')
                     })
-                ctx.reply('切换监听状态成功')
             } catch (e) {
                 console.error('change error: ', e)
                 ctx.reply('切换监听状态失败')
             }
 
         })
-
 
         bot.command('history', ctx => {
             const userId = parseInt(ctx.args[0]);
@@ -190,8 +249,10 @@ export default class BioBot {
         bot.command('send', async ctx => {
 
             this.dbHeller.getChatFormatByChatId(ctx.chat.id).then(chatFormat => {
+                let send = true
                 if (chatFormat) {
                     chatFormat.send_to_chat = !chatFormat.send_to_chat
+                    send = chatFormat.send_to_chat
                     this.dbHeller.updateChatFormat(chatFormat)
                 } else {
                     this.dbHeller.insertChatFormat({
@@ -200,7 +261,7 @@ export default class BioBot {
                         send_to_chat: true
                     })
                 }
-                ctx.reply('切换成功')
+                ctx.reply('发送到当前群聊已 ' + (send ? '开启' : '关闭'))
             }).catch(err => {
                 console.error('send error: ', err)
                 ctx.reply('切换失败')
@@ -241,6 +302,47 @@ export default class BioBot {
         });
     }
 
+    private userHandler() {
+        const bot = this._bot
+        bot.use((ctx, next) => {
+
+            if (ctx.chat.id > 0) {
+                return next()
+            }
+
+            return bot.telegram.getChatAdministrators(ctx.chat.id)
+                .then(data => {
+                    if (!data || !data.length) return;
+                    // @ts-ignore
+                    ctx.chat._admins = data;
+                    // @ts-ignore
+                    ctx.from._is_in_admin_list = data.some(adm => adm.user.id === ctx.from.id);
+                })
+                .catch(console.error)
+                .then(_ => next());
+        });
+
+        let commands = this.commands.filter(it => {
+            return it.command !== 'adme'
+        }).map(it => it.command).join('|');
+
+        const cmdTriggers = new RegExp(`${commands}`);
+        bot.hears(cmdTriggers, (ctx, next) => {
+            // @ts-ignore
+            if (ctx.chat.type !== 'private' && !ctx.from._is_in_admin_list) {
+                return ctx.reply('该功能只对群组管理员开放');
+            }
+            next()
+        });
+        bot.hears(/adme/, (ctx, next) => {
+            // @ts-ignore
+            if (ctx.chat.type !== 'private') {
+                return ctx.reply('该功能只对私聊开放');
+            }
+            next()
+        })
+    }
+
     private sendUsersInBatches(userCache: User[], batchSize: number, ctx) {
         return (start = 0) => {
             const batch = userCache.slice(start, start + batchSize);
@@ -266,7 +368,7 @@ export default class BioBot {
                     reply_markup: batch.length >= BioBot.BATCH_SIZE ? {
                         inline_keyboard: [
                             [{
-                                text: `history_more_${start + batchSize}`,
+                                text: `获取更多`,
                                 callback_data: `history_more_${start + batchSize}`
                             }]
                         ]
@@ -285,23 +387,44 @@ export default class BioBot {
                 this.dbHeller.listAllUsers().then(users => {
                     users.forEach(user => {
                         if (!user.is_deleted) {
-                            this.getCurrentBios([user]).then(bios => {
-                                if (bios[0].bio !== user.bio) {
-                                    user.bio = bios[0].bio
-                                    user.bio_get_time = Date.now()
-                                    this.dbHeller.batchUpdateUsers([user]);
-                                    // record old bio
-                                    this.dbHeller.batchInsertUserBios([{
-                                        user_id: user.id,
-                                        bio: user.bio,
-                                        create_time: user.bio_get_time
-                                    }])
-                                    chatFormats.forEach(chat => {
-                                        const msg = this.formatMsg(chat.format, user)
-                                        this._bot.telegram.sendMessage(chat.chat_id, msg)
-                                    })
-                                }
-                            })
+                            if (!user.uid) {
+                                this.getCurrentBios([user]).then(bios => {
+                                    if (bios[0].bio && bios[0].bio !== user.bio) {
+                                        user.bio = bios[0].bio
+                                        user.bio_get_time = Date.now()
+                                        this.dbHeller.batchUpdateUsers([user]);
+                                        // record old bio
+                                        this.dbHeller.batchInsertUserBios([{
+                                            user_id: user.id,
+                                            bio: user.bio,
+                                            create_time: user.bio_get_time
+                                        }])
+                                        chatFormats.forEach(chat => {
+                                            const msg = this.formatMsg(chat.format, user)
+                                            this._bot.telegram.sendMessage(chat.chat_id, msg)
+                                        })
+                                    }
+                                })
+                            } else {
+                                this.getCurrentUserInfo(user.uid).then(userInfo => {
+                                    if (userInfo.bio && userInfo.bio !== user.bio) {
+                                        user.bio_get_time = Date.now()
+                                        user.bio = userInfo.bio
+                                        user.uri = userInfo.uri
+                                        this.dbHeller.batchUpdateUsers([user])
+                                        // record old bio
+                                        this.dbHeller.batchInsertUserBios([{
+                                            user_id: user.id,
+                                            bio: user.bio,
+                                            create_time: user.bio_get_time
+                                        }])
+                                        chatFormats.forEach(chat => {
+                                            const msg = this.formatMsg(chat.format, user)
+                                            this._bot.telegram.sendMessage(chat.chat_id, msg)
+                                        })
+                                    }
+                                })
+                            }
                         }
                     })
                 })
@@ -333,9 +456,21 @@ export default class BioBot {
         }));
     }
 
+    public async getCurrentUserInfo(chatId: number) {
+        return this._bot.telegram.getChat(chatId).then(chat => {
+            return {
+                uid: chat.id,
+                // @ts-ignore
+                bio: chat.bio,
+                // @ts-ignore
+                uri: chat.username ? BioBot.TG_AT_PREFIX + chat.username : undefined
+            } as User
+        })
+    }
+
     private formatMsg(format: string, user: User) {
-        return format.replace(BioBot.$ALIAS, user.alias)
-            .replace(BioBot.$NAME, user.uri.substring(BioBot.TG_AT_PREFIX.length))
+        return format.replace(BioBot.$ALIAS, user.alias ? user.alias : user.uri?.substring(BioBot.TG_AT_PREFIX.length))
+            .replace(BioBot.$NAME, user.uri?.substring(BioBot.TG_AT_PREFIX.length))
             .replace(BioBot.$BIO, user.bio)
             .replace(BioBot.$TIME, new Date().toLocaleString())
     }
@@ -359,11 +494,12 @@ export default class BioBot {
     }
 
     private usersToMsg(users: User[]) {
-        return users.map(user =>
-            user.id + "  " +
-            (user.alias ? user.alias : user.uri.substring(BioBot.TG_AT_PREFIX.length)) + "  " +
-            user.bio + (user.is_deleted ? "(已删除)" : ""))
-            .join('\n')
+        return users.map(user => {
+            const username = user.uri?.substring(BioBot.TG_AT_PREFIX.length)
+            return user.id + "  " +
+                (user.alias ? user.alias : username ? username : `uid-${user.uid}`) + "  " +
+                user.bio + (user.is_deleted ? "(已删除)" : "")
+        }).join('\n')
     }
 
     private userBiosToMsg(userBios: UserBio[]) {
