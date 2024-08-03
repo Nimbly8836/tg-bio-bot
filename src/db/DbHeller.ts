@@ -19,7 +19,7 @@ export default class DbHeller {
             is_deleted   BOOLEAN DEFAULT 0,
             bio          TEXT,
             bio_get_time INTEGER,
-            create_time  INTEGER DEFAULT CURRENT_TIMESTAMP
+            create_time  DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `;
 
@@ -28,7 +28,7 @@ export default class DbHeller {
         (
             user_id     INTEGER NOT NULL,
             bio         TEXT    NOT NULL CHECK (bio <> ''),
-            create_time INTEGER DEFAULT CURRENT_TIMESTAMP
+            create_time DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `;
 
@@ -37,7 +37,7 @@ export default class DbHeller {
         (
             chat_id      INTEGER NOT NULL,
             format       TEXT    NOT NULL,
-            modify_time  INTEGER,
+            modify_time  DATETIME DEFAULT CURRENT_TIMESTAMP,
             send_to_chat BOOLEAN DEFAULT 0
         )
     `;

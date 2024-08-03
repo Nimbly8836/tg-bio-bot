@@ -12,29 +12,30 @@ export default class BioBot {
     private _bot: Telegraf
     static TG_AT_START = '@'
     static TG_AT_PREFIX = 'https://t.me/'
-    static DEFAULT_FORMAT = '用户${name}更新: ${bio}'
+    static DEFAULT_FORMAT = '用户:${display_name} Bio: ${bio}'
     static $ALIAS = '${alias}'
     static $NAME = '${name}'
     static $BIO = '${bio}'
     static $TIME = '${time}'
+    static $DISPLAY_NAME = '${display_name}'
     static ALIAS_SPLIT = '::'
     static BATCH_SIZE = 6;
     private dbHeller: DbHeller = new DbHeller()
     private tmp_current_bios: UserBio[] = []
 
     private commands = [
-        {command: 'bio', description: '获取监听用户bio，可发送多个，空格分隔'},
+        {command: 'bio', description: '获取监听用户Bio，可发送多个，空格分隔'},
         {command: 'add', description: '添加用户监听，可发送多个，空格分隔(可添加别名::分开)'},
         {command: 'change', description: '改变用户监听状态，可发送多个，空格分隔'},
         {command: 'list', description: '列出当前监听的用户，可发送id，空格分隔'},
-        {command: 'history', description: '列出单个用户bio历史记录，发送id'},
+        {command: 'history', description: '列出单个用户Bio历史记录，发送id'},
         {command: 'alias', description: '设置用户别名，可发送多个，空格分隔 (id::alias)'},
         {
             command: 'format',
-            description: `用户bio改变后通知格式, 可用变量为 \${alias} \${name} \${bio} \${time}(抓取Asia/Shanghai时间)`
+            description: `用户Bio改变后通知格式, 可用变量为 \${display_name}(优先展示别名) \${alias} \${name} \${bio} \${time} `
         },
-        {command: 'send', description: '切换是否发送到当前群聊'},
-        {command: 'adme', description: '私聊机器人添加自己'},
+        {command: 'send', description: '切换是否发送到当前聊天'},
+        {command: 'adme', description: '私聊机器人添加自己(别问为啥不是addme ~~懒惰~~)'},
     ]
 
     public start() {
@@ -47,7 +48,7 @@ export default class BioBot {
         })
 
         bot.start((ctx) => {
-            ctx.reply('这个bot可以监控用户的bio，并发送到指定的频道(使用前请获得别人的同意)。统一格式使用@用户名或者链接')
+            ctx.reply('这个bot可以监控用户的Bio，并发送到指定的频道(使用前请获得别人的同意)。统一格式使用@用户名或者链接')
 
             // insert bot chat format
             this.dbHeller.getChatFormatByChatId(ctx.chat.id).then(chatFormat => {
@@ -87,7 +88,7 @@ export default class BioBot {
                         })
                     })
                 } else {
-                    ctx.reply('请先使用/send开启发送到当前群聊功能')
+                    ctx.reply('请先使用/send开启发送到当前聊天')
                 }
             })
         })
@@ -98,14 +99,12 @@ export default class BioBot {
             try {
                 users = this.argsToUsers(args);
             } catch (e) {
-                ctx.reply('格式错误')
-                return
+                return ctx.reply('格式错误')
             }
             this.getCurrentBios(users)
                 .then(bios => {
                     if (!bios) {
-                        ctx.reply('添加失败')
-                        return
+                        return ctx.reply('添加失败')
                     }
                     bios.forEach(it => it.bio_get_time = Date.now())
                     this.dbHeller.batchInsertUsers(bios);
@@ -116,10 +115,10 @@ export default class BioBot {
                                 return {
                                     user_id: user.id,
                                     bio: user.bio,
-                                    create_time: user.bio_get_time
+                                    create_time: Date.now()
                                 } as UserBio
                             }))
-                            ctx.reply("添加成功, Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                            ctx.reply("添加成功\nId DisplayName Bio\n" + this.usersToMsg(insertUsers))
                         } else {
                             ctx.reply('添加失败')
                         }
@@ -143,16 +142,15 @@ export default class BioBot {
                                             return {
                                                 user_id: user.id,
                                                 bio: user.bio,
-                                                create_time: user.bio_get_time
+                                                create_time: Date.now()
                                             } as UserBio
                                         }))
-                                        return ctx.reply("添加成功, Id Name/alias Bio:\n" + this.usersToMsg(insertUsers))
+                                        return ctx.reply("添加成功\nId DisplayName Bio\n" + this.usersToMsg(insertUsers))
                                     } else {
                                         return ctx.reply('添加失败')
                                     }
                                 })
                             }
-                            return ctx.reply("添加成功")
                         } else {
                             let first = getUsers[0];
                             if (first.uri !== user.uri) {
@@ -164,7 +162,7 @@ export default class BioBot {
 
                 })
             } else {
-                ctx.reply('添加失败')
+               return ctx.reply('添加失败')
             }
         })
 
@@ -194,14 +192,6 @@ export default class BioBot {
             try {
                 this.dbHeller.getUserByIds(users.map(it => it.id))
                     .then(getUsers => {
-                        // if (getUsers.length !== users.length) {
-                        //     const notExitIds = users.map(it => {
-                        //         if (!getUsers.map(it => it.id).includes(it.id)) {
-                        //             return it.id
-                        //         }
-                        //     }).join(',')
-                        //     return ctx.reply(`${notExitIds} 用户不存在`)
-                        // }
                         if (getUsers) {
                             getUsers.forEach(it => it.is_deleted = !it.is_deleted)
                             this.dbHeller.batchUpdateUsers(getUsers);
@@ -219,6 +209,9 @@ export default class BioBot {
 
         bot.command('history', ctx => {
             const userId = parseInt(ctx.args[0]);
+            if (!userId) {
+                return ctx.reply("请输入id");
+            }
             this.dbHeller.getUserBioByUserId([userId]).then(bios => {
                 this.tmp_current_bios = bios
                 const sendBiosInBatches = this.sendBiosInBatches(this.tmp_current_bios, BioBot.BATCH_SIZE, ctx);
@@ -231,6 +224,9 @@ export default class BioBot {
                 let split = arg.split(BioBot.ALIAS_SPLIT)
                 return {id: parseInt(split[0]), alias: split[1]} as User
             })
+            if (users.filter(it => !it.id || !it.alias).length > 0) {
+                return ctx.reply('格式错误, 请使用 id::alias 格式, 多个用户空格分隔')
+            }
             try {
                 this.dbHeller.batchUpdateUsers(users);
                 ctx.reply('更新别名成功')
@@ -240,6 +236,9 @@ export default class BioBot {
         })
 
         bot.command('format', ctx => {
+            if (!ctx.payload) {
+                return ctx.reply('请带上发送模板 可用变量为 ${display_name}(优先展示别名) ${alias} ${name} ${bio} ${time}')
+            }
             try {
                 this.dbHeller.updateChatFormat({
                     chat_id: ctx.chat.id,
@@ -267,7 +266,7 @@ export default class BioBot {
                         send_to_chat: true
                     })
                 }
-                ctx.reply('发送到当前群聊已 ' + (send ? '开启' : '关闭'))
+                ctx.reply('发送到当前 ' + (send ? '开启' : '关闭'))
             }).catch(err => {
                 console.error('send error: ', err)
                 ctx.reply('切换失败')
@@ -335,15 +334,15 @@ export default class BioBot {
         const cmdTriggers = new RegExp(`${commands}`);
         bot.hears(cmdTriggers, (ctx, next) => {
             // @ts-ignore
-            if (ctx.chat.type !== 'private' && !ctx.from._is_in_admin_list) {
-                return ctx.reply('该功能只对群组管理员开放');
+            if (ctx.chat?.type !== 'private' && !ctx.from._is_in_admin_list) {
+                return ctx.reply('该命令只对群组管理员开放');
             }
             next()
         });
         bot.hears(/adme/, (ctx, next) => {
             // @ts-ignore
             if (ctx.chat.type !== 'private') {
-                return ctx.reply('该功能只对私聊开放');
+                return ctx.reply('该命令只对私聊开放');
             }
             next()
         })
@@ -353,7 +352,7 @@ export default class BioBot {
         return (start = 0) => {
             const batch = userCache.slice(start, start + batchSize);
             if (batch.length > 0) {
-                ctx.reply("Id Name/Alias Bio\n" + this.usersToMsg(batch), {
+                ctx.reply("Id DisplayName Bio\n" + this.usersToMsg(batch), {
                     reply_markup: batch.length >= BioBot.BATCH_SIZE ? {
                         inline_keyboard: [
                             [{text: '获取更多', callback_data: `list_more_${start + batchSize}`}]
@@ -361,7 +360,7 @@ export default class BioBot {
                     } : undefined
                 });
             } else {
-                ctx.reply('没有更多记录。');
+                ctx.reply('没有更多');
             }
         };
     }
@@ -381,7 +380,7 @@ export default class BioBot {
                     } : undefined
                 });
             } else {
-                ctx.reply('没有更多记录。');
+                ctx.reply('没有更多');
             }
         };
     }
@@ -475,10 +474,19 @@ export default class BioBot {
     }
 
     private formatMsg(format: string, user: User) {
-        return format.replace(BioBot.$ALIAS, user.alias ? user.alias : user.uri?.substring(BioBot.TG_AT_PREFIX.length))
+        const display_name = user.alias ? user.alias : user.uri?.substring(BioBot.TG_AT_PREFIX.length) ? user.uri?.substring(BioBot.TG_AT_PREFIX.length) : `uid-${user.uid}`
+        return format.replace(BioBot.$DISPLAY_NAME, display_name).replace(BioBot.$ALIAS, user.alias ? user.alias : user.uri?.substring(BioBot.TG_AT_PREFIX.length))
             .replace(BioBot.$NAME, user.uri?.substring(BioBot.TG_AT_PREFIX.length))
             .replace(BioBot.$BIO, user.bio)
-            .replace(BioBot.$TIME, new Date().toLocaleString())
+            .replace(BioBot.$TIME, new Date(user.bio_get_time).toLocaleString("zh-CN", {
+                timeZone: "Asia/Shanghai",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false
+            }))
     }
 
     private argsToUsers(args: string[]): User[] {
@@ -506,13 +514,21 @@ export default class BioBot {
             const username = user.uri?.substring(BioBot.TG_AT_PREFIX.length)
             return user.id + "  " +
                 (user.alias ? user.alias : username ? username : `uid-${user.uid}`) + "  " +
-                user.bio + (user.is_deleted ? "(已删除)" : "")
+                user.bio + (user.is_deleted ? "(不监听)" : "")
         }).join('\n')
     }
 
     private userBiosToMsg(userBios: UserBio[]) {
         return userBios.map(bio =>
-            new Date(bio.create_time).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai"}) + "  " +
+            new Date(bio.create_time).toLocaleString("zh-CN", {
+                timeZone: "Asia/Shanghai",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false
+            }) + "  " +
             bio.bio)
             .join('\n')
     }
