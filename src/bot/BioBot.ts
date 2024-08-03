@@ -94,7 +94,13 @@ export default class BioBot {
 
         bot.command('add', ctx => {
             const args = ctx.args;
-            const users = this.argsToUsers(args);
+            let users = []
+            try {
+                users = this.argsToUsers(args);
+            } catch (e) {
+                ctx.reply('格式错误')
+                return
+            }
             this.getCurrentBios(users)
                 .then(bios => {
                     if (!bios) {
@@ -486,8 +492,10 @@ export default class BioBot {
             }
             if (arg.startsWith(BioBot.TG_AT_START)) {
                 user.uri = BioBot.TG_AT_PREFIX + arg.substring(1)
-            } else {
+            } else if (arg.startsWith(BioBot.TG_AT_PREFIX)) {
                 user.uri = arg
+            } else {
+                throw new Error('uri error')
             }
             return user
         })
