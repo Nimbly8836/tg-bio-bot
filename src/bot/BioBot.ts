@@ -70,6 +70,11 @@ export default class BioBot {
         bot.telegram.setMyCommands(this.commands).catch(err => {
             console.error('setMyCommands error: ', err)
         })
+
+        bot.catch((err, ctx) => {
+            console.error('bot error: ', err, ctx.update)
+        })
+
         bot.launch().catch(err => {
             console.error('bot launch error: ', err)
         })
